@@ -1,0 +1,41 @@
+# --- Secrets ---
+.env
+.env.local
+.env.*.local
+.streamlit/secrets.toml
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Project data ---
+# Raw scraped HTML/PDFs are not shipped — they're rebuilt by `python main.py refresh`.
+# The pre-built ChromaDB is shipped so the deployed app has data on first request.
+data/raw/
+data/processed/memory.db
+data/processed/memory.db-*
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Build / dist ---
+build/
+dist/
+*.log
