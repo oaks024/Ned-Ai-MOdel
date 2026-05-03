@@ -15,6 +15,68 @@ st.set_page_config(
     layout="wide",
 )
 
+# --------------- styling ---------------
+st.markdown(
+    """
+<style>
+    .block-container { padding-top: 1.5rem; }
+    .ned-header {
+        background: linear-gradient(135deg, #003366 0%, #0066cc 100%);
+        color: #ffffff;
+        padding: 1.4rem 1.8rem;
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 14px rgba(0, 51, 102, 0.18);
+    }
+    .ned-header h1 {
+        color: #ffffff !important;
+        margin: 0;
+        font-size: 1.9rem;
+        font-weight: 700;
+    }
+    .ned-header p {
+        color: #d6e4f0;
+        margin: 0.35rem 0 0;
+        font-size: 0.95rem;
+    }
+    .profile-chip {
+        background: #f1f6fb;
+        border-left: 4px solid #0066cc;
+        padding: 0.55rem 0.9rem;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        color: #1a2740;
+        margin-bottom: 1rem;
+    }
+    .starter-label {
+        font-size: 0.85rem;
+        color: #4a5568;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.4rem;
+        margin-top: 0.5rem;
+    }
+    div.stButton > button[kind="secondary"] {
+        text-align: left;
+        white-space: normal;
+        height: auto;
+        padding: 0.7rem 0.9rem;
+        line-height: 1.35;
+    }
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+STARTER_QUESTIONS = [
+    "What is the admission process at NED?",
+    "What programs are offered for undergraduate admission?",
+    "What documents are required for admission?",
+    "What is the fee structure?",
+    "Is there an entry test? How does it work?",
+    "How can I apply online and where do I find the prospectus?",
+]
+
 
 @st.cache_resource(show_spinner="Loading models and vector store...")
 def load_chain():
@@ -28,6 +90,8 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "pending_question" not in st.session_state:
+    st.session_state.pending_question = None
 
 try:
     chain, cfg = load_chain()
@@ -97,12 +161,32 @@ with st.sidebar:
         st.rerun()
 
 
-# --------------- main chat ---------------
-st.title("🎓 NED Admission Assistant")
-st.caption(
-    "Ask about admissions at NED University of Engineering & Technology. "
-    "Answers come from official NED sources only."
+# --------------- main: header + profile chip ---------------
+st.markdown(
+    """
+<div class="ned-header">
+    <h1>🎓 NED Admission Assistant</h1>
+    <p>Official admission information for NED University of Engineering &amp; Technology — every answer cites a real NED source.</p>
+</div>
+""",
+    unsafe_allow_html=True,
 )
+
+profile = chain.memory.get_profile(st.session_state.session_id)
+chip_bits = []
+if profile.get("user_name"):
+    chip_bits.append(f"👤 <b>{profile['user_name']}</b>")
+if profile.get("interested_program"):
+    chip_bits.append(f"📘 {profile['interested_program']}")
+if profile.get("education_level"):
+    chip_bits.append(f"🎓 {profile['education_level']}")
+if profile.get("category"):
+    chip_bits.append(f"🏷️ {profile['category']}")
+if chip_bits:
+    st.markdown(
+        f'<div class="profile-chip">Personalizing for: {" &nbsp;•&nbsp; ".join(chip_bits)}</div>',
+        unsafe_allow_html=True,
+    )
 
 if chain.store.count() == 0:
     st.warning(
@@ -110,7 +194,27 @@ if chain.store.count() == 0:
         "terminal, or click **Refresh NED data** in the sidebar."
     )
 
-# Replay history.
+
+# --------------- starter questions (only when chat is empty) ---------------
+def _set_pending(question: str) -> None:
+    st.session_state.pending_question = question
+
+
+if not st.session_state.messages and chain.store.count() > 0:
+    st.markdown('<div class="starter-label">Try one of these to get started</div>',
+                unsafe_allow_html=True)
+    cols = st.columns(2)
+    for i, q in enumerate(STARTER_QUESTIONS):
+        cols[i % 2].button(
+            q,
+            key=f"starter_{i}",
+            use_container_width=True,
+            on_click=_set_pending,
+            args=(q,),
+        )
+
+
+# --------------- replay history ---------------
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
@@ -122,15 +226,25 @@ for m in st.session_state.messages:
                         label += f" (page {s['page_number']})"
                     st.markdown(f"- [{label}]({s['url']})")
 
-q = st.chat_input("Ask about NED admissions...")
-if q:
-    st.session_state.messages.append({"role": "user", "content": q})
+
+# --------------- handle new question (chat input OR starter button) ---------------
+typed = st.chat_input("Ask about NED admissions...")
+question = typed or st.session_state.pending_question
+if st.session_state.pending_question:
+    st.session_state.pending_question = None
+
+if question:
+    st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
-        st.markdown(q)
+        st.markdown(question)
     with st.chat_message("assistant"):
-        with st.spinner("Searching official NED data..."):
+        spinner_text = (
+            f"Searching official NED admission data "
+            f"({chain.store.count()} chunks indexed)..."
+        )
+        with st.spinner(spinner_text):
             try:
-                result = chain.answer(q, session_id=st.session_state.session_id)
+                result = chain.answer(question, session_id=st.session_state.session_id)
             except Exception as e:
                 result = {"answer": f"Error: {e}", "sources": []}
         st.markdown(result["answer"])
