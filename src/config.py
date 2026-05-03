@@ -13,7 +13,18 @@ load_dotenv()
 class Config:
     def __init__(self):
         self.groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
-        self.litellm_model = os.getenv("LITELLM_MODEL", "groq/llama-3.3-70b-versatile")
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        self.litellm_model = os.getenv("LITELLM_MODEL", "groq/llama-3.1-8b-instant")
+        # Comma-separated list of LiteLLM model strings to try if the primary
+        # model returns a rate-limit / quota error. Order matters.
+        self.litellm_fallbacks = [
+            m.strip()
+            for m in os.getenv(
+                "LITELLM_FALLBACKS",
+                "groq/openai/gpt-oss-20b,groq/llama-3.3-70b-versatile,gemini/gemini-2.5-flash",
+            ).split(",")
+            if m.strip()
+        ]
         self.embedding_model = os.getenv(
             "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
         )
@@ -22,12 +33,17 @@ class Config:
         self.ned_base_url = os.getenv("NED_BASE_URL", "https://www.neduet.edu.pk/")
         self.raw_data_path = os.getenv("RAW_DATA_PATH", "./data/raw")
         self.max_crawl_pages = int(os.getenv("MAX_CRAWL_PAGES", "80"))
-        self.top_k = int(os.getenv("TOP_K", "5"))
+        self.top_k = int(os.getenv("TOP_K", "3"))
+        self.history_limit = int(os.getenv("HISTORY_LIMIT", "4"))
+        self.max_tokens = int(os.getenv("MAX_TOKENS", "800"))
 
-        # LiteLLM reads GROQ_API_KEY from the environment. Make sure it is set
-        # for this process even if the user only put it in .env.
+        # LiteLLM reads GROQ_API_KEY / GEMINI_API_KEY from the environment.
+        # Make sure they are set for this process even if the user only put
+        # them in .env.
         if self.groq_api_key:
             os.environ["GROQ_API_KEY"] = self.groq_api_key
+        if self.gemini_api_key:
+            os.environ["GEMINI_API_KEY"] = self.gemini_api_key
 
     def validate(self):
         """Raises a clear error if anything required is missing."""

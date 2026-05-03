@@ -44,6 +44,7 @@ class RAGChain:
         self.store = VectorStore(config.chroma_db_path)
         self.memory = SessionMemory(config.memory_db_path)
         self.model = config.litellm_model
+        self.fallbacks = config.litellm_fallbacks
 
     # --------------- formatting helpers ---------------
     @staticmethod
@@ -116,7 +117,7 @@ class RAGChain:
             return {"answer": NO_CONTEXT_MESSAGE, "sources": [], "chunks": []}
 
         profile = self.memory.get_profile(session_id)
-        history = self.memory.get_history(session_id, limit=12)
+        history = self.memory.get_history(session_id, limit=self.config.history_limit)
 
         context_block = self._format_context(chunks)
         profile_block = self._format_profile(profile)
@@ -140,17 +141,42 @@ class RAGChain:
         messages.extend(history)
         messages.append({"role": "user", "content": user_prompt})
 
-        try:
-            resp = completion(
-                model=self.model,
-                messages=messages,
-                temperature=0.1,
-                max_tokens=1500,
-            )
-            text = resp["choices"][0]["message"]["content"]
-        except Exception as e:
-            logger.exception("LLM call failed")
-            return {"answer": f"LLM call failed: {e}", "sources": [], "chunks": chunks}
+        # Try the primary model first, then walk the fallback chain on
+        # rate-limit / quota / availability errors. Each model is independent
+        # — if Groq's daily cap is hit, we transparently try the next model
+        # (possibly on a different provider like Gemini) so the user never
+        # sees a dead app.
+        models_to_try = [self.model] + list(self.fallbacks)
+        last_error: Exception | None = None
+        text: str | None = None
+        for candidate in models_to_try:
+            try:
+                resp = completion(
+                    model=candidate,
+                    messages=messages,
+                    temperature=0.1,
+                    max_tokens=self.config.max_tokens,
+                )
+                text = resp["choices"][0]["message"]["content"]
+                if candidate != self.model:
+                    logger.warning("Primary model failed; answered via fallback %s", candidate)
+                break
+            except Exception as e:
+                last_error = e
+                logger.warning("Model %s failed: %s", candidate, e)
+                continue
+
+        if text is None:
+            logger.exception("All models failed", exc_info=last_error)
+            return {
+                "answer": (
+                    "All language models are currently rate-limited or "
+                    "unavailable. Please try again in a few minutes. "
+                    f"(last error: {last_error})"
+                ),
+                "sources": [],
+                "chunks": chunks,
+            }
 
         sources = self._dedupe_sources(chunks)
         # Persist the bare question/answer pair so future turns have history.
